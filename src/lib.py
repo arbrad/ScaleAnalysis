@@ -821,25 +821,53 @@ class Tessellation:
                 if vtx not in edge_vtxs:
                     vtxs.add(vtx)
         vtxs = list(vtxs)
-        def inside(vtx):
-            if len(vtx.adjacent) != 3: return True
-            A, B, C = [np.array(v.coord()) for v in vtx.adjacent]
-            D = np.array(vtx.coord())
-            b0 = np.cross(B-A, D-A) >= 0
-            b1 = np.cross(C-B, D-B) >= 0
-            b2 = np.cross(A-C, D-C) >= 0
-            return b0 and b1 and b2
-        n = 0
-        while n < N:
+        for _ in range(N):
             vtx = random.choice(vtxs)
             if len(vtx.adjacent) != 3: continue
-            p = sample_triangle(*vtx.adjacent)
-            orig = vtx.coord()
-            vtx.move(p[0], p[1])
-            if not all(inside(adj) for adj in vtx.adjacent):
-                vtx.move(orig[0], orig[1])
-            else:
-                n += 1
+            # initial region is triangle of adjacent coordinates
+            coords = [v.coord() for v in vtx.adjacent]
+            coords += [coords[0]]
+            p = shapely.Polygon(coords)
+            # now intersect with half-planes formed by
+            #  o for vtx-A-A' segment, A-A' gives line
+            #  o the half-plane is given by the side of A-A' that vtx is on
+            # note: using finite polygons as half-plane approximations
+            for adj in vtx.adjacent:
+                for adj_adj in adj.adjacent:
+                    if adj_adj == vtx: continue
+                    A = np.array(adj.coord())
+                    Ap = np.array(adj_adj.coord())
+                    V = np.array(vtx.coord())
+                    right = np.cross(Ap-A, V-A) <= 0
+                    # finite approximation: large segment through A-Ap
+                    v = Ap-A
+                    X = A - 1e6*v
+                    Y = A + 1e6*v
+                    # perpendicular to XY according to 'right'
+                    u = np.array([v[1], -v[0]])
+                    if not right: u *= -1
+                    # XYZW is large square approximating halfplane
+                    W = X + 2e6*u
+                    Z = Y + 2e6*u
+                    # intersect p with this halfplane
+                    if right:
+                        square = [X, W, Z, Y, X]
+                    else:
+                        square = [X, Y, Z, W, X]
+                    q = shapely.Polygon(square)
+                    p = p.intersection(q)
+            p = of_shapely(p)
+            tgt = p.random_coord()
+            vtx.move(tgt[0], tgt[1])
+            # def inside(vtx):
+            #     if len(vtx.adjacent) != 3: return True
+            #     A, B, C = [np.array(v.coord()) for v in vtx.adjacent]
+            #     D = np.array(vtx.coord())
+            #     b0 = np.cross(B-A, D-A) >= 0
+            #     b1 = np.cross(C-B, D-B) >= 0
+            #     b2 = np.cross(A-C, D-C) >= 0
+            #     return b0 and b1 and b2
+            # assert all(inside(adj) or adj not in edge_vtxs for adj in vtx.adjacent)
         for poly in self.polygons:
             poly.update_centroid()
         self.p2i = None
